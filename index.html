@@ -193,7 +193,7 @@ canvas{display:block}
 <button class="mbtn" onclick="startGame()">▶ Играть</button>
 <button class="mbtn sec" onclick="showSettings()">⚙ Настройки</button>
 <div class="hint">ПК: WASD, Shift, Пробел, мышь, ЛКМ, ПКМ, R, 1-4, V<br>Телефон: джойстик слева, обзор справа, кнопки огня/прыжка/перезарядки</div>
-<div class="ver">NEON STRIKE v10.1 Mobile • Сделано Колей</div>
+<div class="ver">NEON STRIKE v10.2 Sound • Сделано Колей</div>
 </div>
 
 <div id="settings-menu">
@@ -270,6 +270,70 @@ canvas{display:block}
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
+// === AUDIO ENGINE ===
+let audioCtx = null;
+function initAudio() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function playTone(freq, type, duration, vol = 0.1) {
+    if (!audioCtx) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+}
+
+function playNoise(duration, vol = 0.2, filterFreq = 1000) {
+    if (!audioCtx) return;
+    const bufferSize = audioCtx.sampleRate * duration;
+    const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+    
+    const noise = audioCtx.createBufferSource();
+    noise.buffer = buffer;
+    
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = filterFreq;
+    
+    const gain = audioCtx.createGain();
+    gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+    
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(audioCtx.destination);
+    noise.start();
+}
+
+const SFX = {
+    shoot_pistol: () => { playTone(800, 'square', 0.1, 0.15); playNoise(0.05, 0.1, 2000); },
+    shoot_rifle: () => { playTone(400, 'sawtooth', 0.15, 0.2); playNoise(0.1, 0.15, 1000); },
+    shoot_shotgun: () => { playNoise(0.3, 0.3, 800); playTone(100, 'sine', 0.2, 0.2); },
+    shoot_sniper: () => { playTone(200, 'sawtooth', 0.4, 0.25); playNoise(0.1, 0.2, 500); },
+    reload: () => { 
+        setTimeout(() => playTone(600, 'triangle', 0.05, 0.1), 0);
+        setTimeout(() => playTone(800, 'triangle', 0.05, 0.1), 100);
+    },
+    enemy_hit: () => { playTone(300, 'square', 0.05, 0.1); },
+    enemy_die: () => { playTone(150, 'sawtooth', 0.3, 0.15); playNoise(0.2, 0.1, 600); },
+    boss_spawn: () => { playTone(80, 'sine', 1.0, 0.3); playTone(60, 'sine', 1.0, 0.2); },
+    pickup_health: () => { playTone(1200, 'sine', 0.1, 0.1); setTimeout(()=>playTone(1500,'sine',0.1,0.1),100); },
+    pickup_ammo: () => { playTone(900, 'triangle', 0.1, 0.1); },
+    jump: () => { playTone(400, 'sine', 0.1, 0.05); },
+    step: () => { playNoise(0.05, 0.05, 400); }
+};
+
+// === GAME CONFIG ===
 const S={sens:.002,diff:'normal',loc:'arena',weather:'clear'};
 const DC={easy:{spd:.02,dmg:5,cnt:5,acc:.3},normal:{spd:.035,dmg:10,cnt:7,acc:.5},hard:{spd:.05,dmg:15,cnt:10,acc:.7}};
 let gameOn=false;
@@ -556,6 +620,7 @@ function reload(){
   isReload=true;
   reloadT=w.reload;
   document.getElementById('reload-ind').style.display='block';
+  SFX.reload(); // ЗВУК ПЕРЕЗАРЯДКИ
 }
 function scope(){
   if(curW!=='sniper'||isScoped||isReload)return;
@@ -724,6 +789,7 @@ function spawnBoss(level){
   document.getElementById('boss-name').textContent=level===1?'💀 БОСС УР.1':'🔥 БОСС УР.2';
   updateBossHP();
   updateWave();
+  SFX.boss_spawn(); // ЗВУК БОССА
 }
 function updateBossHP(){
   if(!boss)return;
@@ -868,8 +934,8 @@ function updateBonuses(){
     b.mesh.rotation.y+=.03;
     b.mesh.position.y=1+Math.sin(Date.now()*.003+i)*.3;
     if(b.mesh.position.distanceTo(_v3.set(playerPos.x,1,playerPos.z))<2){
-      if(b.type==='health'){hp=Math.min(100,hp+30);updateHP()}
-      else if(b.type==='ammo'){resAmmo+=30;updateAmmo()}
+      if(b.type==='health'){hp=Math.min(100,hp+30);updateHP();SFX.pickup_health()}
+      else if(b.type==='ammo'){resAmmo+=30;updateAmmo();SFX.pickup_ammo()}
       else if(b.type==='speed')speedBoost=600;
       else if(b.type==='shield')shieldTimer=300;
       document.getElementById('pickup-msg').textContent=bonusNames[b.type];
@@ -997,6 +1063,7 @@ function killEnemy(e){
   document.getElementById('score-d').textContent='Счёт: '+score;
   updateWave();
   respawnQueue.push({timer:180});
+  SFX.enemy_die(); // ЗВУК СМЕРТИ ВРАГА
 }
 function updateRespawns(){
   for(let i=respawnQueue.length-1;i>=0;i--){
@@ -1054,6 +1121,13 @@ document.addEventListener('mousedown',e=>{
   const fm=gunGroup.getObjectByName('fm');
   if(fl)fl.intensity=3;
   if(fm)fm.material.opacity=1;
+  
+  // ЗВУК ВЫСТРЕЛА
+  if(curW==='pistol') SFX.shoot_pistol();
+  else if(curW==='rifle') SFX.shoot_rifle();
+  else if(curW==='shotgun') SFX.shoot_shotgun();
+  else if(curW==='sniper') SFX.shoot_sniper();
+
   const dir=new THREE.Vector3();
   camera.getWorldDirection(dir);
   const muzzle=new THREE.Vector3();
@@ -1083,6 +1157,7 @@ document.addEventListener('mousedown',e=>{
         if(en.userData.hb)drawHP(en.userData.hb,en.userData.hp/en.userData.maxHp);
         if(en.userData.isBoss)updateBossHP();
         if(en.userData.hp<=0)killEnemy(en);
+        else SFX.enemy_hit(); // ЗВУК ПОПАДАНИЯ
       }
     }
   }
@@ -1137,6 +1212,7 @@ function updateFPS(){
 }
 
 function startGame(){
+  initAudio(); // АКТИВАЦИЯ АУДИО
   document.getElementById('main-menu').style.display='none';
   document.getElementById('hud').style.display='block';
   buildMap(S.loc);
@@ -1154,6 +1230,7 @@ function startGame(){
 }
 
 let frameCount=0;
+let lastStepTime=0;
 function animate(){
   requestAnimationFrame(animate);
   updateFPS();
@@ -1185,7 +1262,17 @@ function animate(){
   else stamina=Math.min(100,stamina+.3);
   document.getElementById('st-fill').style.width=stamina+'%';
 
-  if(keys.Space&&onGround){velY=JUMP;onGround=false}
+  // ЗВУК ШАГОВ
+  if(moving && onGround && Date.now()-lastStepTime > (isRunning?250:400)){
+      SFX.step();
+      lastStepTime = Date.now();
+  }
+
+  if(keys.Space&&onGround){
+      velY=JUMP;
+      onGround=false;
+      SFX.jump(); // ЗВУК ПРЫЖКА
+  }
   velY+=GRAV;
   playerPos.y+=velY;
   if(playerPos.y<=0){playerPos.y=0;velY=0;onGround=true}
@@ -1528,6 +1615,7 @@ addEventListener('resize',()=>{
 
   bindButton('btn-fire',function(){
     if(!gameOn||hp<=0)return;
+    initAudio();
     document.dispatchEvent(new MouseEvent('mousedown',{button:0,bubbles:true}));
     clearInterval(fireTimer);
     fireTimer=setInterval(function(){
